@@ -1,0 +1,11 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Now Playing Edge"
+ Width="20" Height="104" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
+ Background="Transparent" ShowInTaskbar="False" ShowActivated="False" Topmost="True"
+ UseLayoutRounding="True" SnapsToDevicePixels="True">
+ <Border CornerRadius="7" Background="#F5F5F8" BorderBrush="#40FFFFFF" BorderThickness="1" Padding="6,9" Cursor="SizeAll">
+  <Grid><Border x:Name="DockTrack" Width="6" Height="84" Background="#20000000" CornerRadius="3">
+   <Grid ClipToBounds="True"><Border x:Name="DockFill" Height="0" VerticalAlignment="Bottom" Background="#727A91" CornerRadius="3"/></Grid>
+  </Border></Grid>
+ </Border>
+</Window>

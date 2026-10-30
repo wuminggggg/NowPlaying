@@ -145,3 +145,16 @@ public static class FloatingWindowChrome {
   int noBorder=unchecked((int)0xFFFFFFFE);DwmSetWindowAttribute(window,34,ref noBorder,4);
  }
 }
+public static class StartupPaths {
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern uint GetFinalPathNameByHandle(IntPtr handle,System.Text.StringBuilder path,uint length,uint flags);
+ public static string ResolveFile(string path){
+  using(var file=System.IO.File.OpenRead(path)){
+   var result=new System.Text.StringBuilder(32768);
+   if(GetFinalPathNameByHandle(file.SafeFileHandle.DangerousGetHandle(),result,32768,0)==0)
+    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+   string final=result.ToString();
+   if(final.StartsWith(@"\\?\UNC\"))return @"\\"+final.Substring(8);
+   return final.StartsWith(@"\\?\")?final.Substring(4):final;
+  }
+ }
+}

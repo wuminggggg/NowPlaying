@@ -7,3 +7,8 @@
 bin/
 obj/
 /dist/
+/NowPlaying.ps1
+/Docking.ps1
+/Start.vbs
+/Start-debug.cmd
+/source/
