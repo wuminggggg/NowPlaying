@@ -16,14 +16,15 @@ using System.Windows.Interop;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Windows.Media.Control;
 using Forms=System.Windows.Forms;
 
 [assembly:AssemblyTitle("NowPlaying")]
 [assembly:AssemblyProduct("NowPlaying")]
-[assembly:AssemblyVersion("1.0.3.0")]
-[assembly:AssemblyFileVersion("1.0.3.0")]
+[assembly:AssemblyVersion("1.1.0.0")]
+[assembly:AssemblyFileVersion("1.1.0.0")]
 [assembly:AssemblyCopyright("Copyright (C) 2026 wuminggggg")]
 
 class NativePlayer {
@@ -42,6 +43,11 @@ class NativePlayer {
  GlobalSystemMediaTransportControlsSessionManager manager;
  GlobalSystemMediaTransportControlsSession session;
  string sessionId="",latest="",chosen="",dockSide="",recordAction="",seekId="";
+ string backgroundColor="#F2EFFA";
+ bool backgroundImage,wasPlaying,motionTesting;
+ bool Animations {get{return (!testing||motionTesting)&&SystemParameters.ClientAreaAnimation;}}
+ BitmapSource backgroundBitmap;
+ int motion;
  long sequence;
  bool disabled,hover,moving,seeking,transition,polling,closing;
  double opacity=.88,hoverOpacity=.95,dockTop,dockLeft,left=double.NaN,top=double.NaN;
@@ -79,6 +85,7 @@ class NativePlayer {
  testing=test;
  var binaryFolder=new DirectoryInfo(Path.GetDirectoryName(Executable));
  if(binaryFolder.Parent!=null&&binaryFolder.Parent.Name=="app"&&binaryFolder.Parent.Parent!=null&&binaryFolder.Parent.Parent.Name=="NowPlaying")root=binaryFolder.Parent.Parent.FullName;
+ if(test)root=Path.Combine(Path.GetTempPath(),"NowPlaying UI test "+Guid.NewGuid().ToString("N"));
 }
  int Run(string testLog){
   if(!testing){
@@ -88,6 +95,7 @@ class NativePlayer {
    wake=new EventWaitHandle(false,EventResetMode.AutoReset,@"Local\CodexNowPlayingWake");
   }
   Load();
+  if(backgroundImage){try{backgroundBitmap=ReadBackground(Path.Combine(root,"background.png"));}catch{backgroundImage=false;}}
   app=new Application();app.ShutdownMode=ShutdownMode.OnExplicitShutdown;
   using(var stream=Resource("Player.xaml"))main=(Window)XamlReader.Load(stream);
   using(var stream=Resource("Edge.xaml"))edge=(Window)XamlReader.Load(stream);
@@ -117,7 +125,7 @@ class NativePlayer {
   seek.KeyUp+=async(s,e)=>{await Seek();seeking=false;ScheduleCollapse();};
   seek.ValueChanged+=(s,e)=>UI<TextBlock>("Elapsed").Text=Clock(seek.Value);
   CreateTray();
-  main.ContentRendered+=(s,e)=>{};
+  main.ContentRendered+=(s,e)=>{if(!testing){var slide=(TranslateTransform)UI<Border>("Card").RenderTransform;slide.Y=8;Animate(slide,TranslateTransform.YProperty,0,260);}};
   main.Closed+=(s,e)=>{
    if(closing)return;closing=true;Save();timer.Stop();collapse.Stop();hooks.Dispose();
    tray.Visible=false;tray.Dispose();if(wake!=null)wake.Dispose();if(mutex!=null){mutex.ReleaseMutex();mutex.Dispose();}
@@ -138,7 +146,7 @@ class NativePlayer {
     if(++ticks%5==0&&!polling){polling=true;try{await Poll();}finally{polling=false;}}
    }catch(Exception error){Log(error);}
   };
-  ApplyOpacity();
+  ApplyBackground();ApplyOpacity();
   main.Show();main.UpdateLayout();
   Rect area=Area(double.IsNaN(left)?0:left+172,double.IsNaN(top)?0:top+100);
   if(double.IsNaN(left)){main.Left=area.Right-main.ActualWidth-20;main.Top=area.Bottom-main.ActualHeight-20;}
@@ -147,9 +155,9 @@ class NativePlayer {
   int code=0;
   if(testing){
    app.Dispatcher.BeginInvoke(new Action(async()=>{
-    try{await Tests();File.WriteAllText(testLog,"PASS: native WPF, media, hooks, opacity, docking, settings, registry startup, startup path repair");}
+    try{await Tests();await MotionTests();await VisualTests(Path.GetDirectoryName(testLog));File.WriteAllText(testLog,"PASS: native WPF, media, hooks, opacity, docking, settings, registry startup, startup path repair, background presets, image import, background reload, hover and docking animations");}
     catch(Exception error){code=1;File.WriteAllText(testLog,"FAIL: "+error);}
-    main.Close();
+    main.Close();if(Directory.Exists(root))Directory.Delete(root,true);
    }));
   }else{
    try{startup.Migrate();startupMenu.Checked=startup.Enabled;}catch(Exception e){Log(e);}
@@ -165,6 +173,8 @@ class NativePlayer {
    opacity=Number(data,"opacity",.88);hoverOpacity=Number(data,"hoverOpacity",.95);
    left=Number(data,"left",double.NaN);top=Number(data,"top",double.NaN);
    dockLeft=Number(data,"dockLeft",0);dockTop=Number(data,"dockTop",100);
+   if(data.TryGetValue("backgroundColor",out value)){try{var color=(Color)ColorConverter.ConvertFromString(Convert.ToString(value));backgroundColor=color.ToString();}catch{}}
+   if(data.TryGetValue("backgroundImage",out value))backgroundImage=Convert.ToBoolean(value);
    if(data.TryGetValue("shortcutsDisabled",out value))disabled=Convert.ToBoolean(value);
    if(data.TryGetValue("dockSide",out value)&&new[]{"Left","Right"}.Contains(Convert.ToString(value)))dockSide=Convert.ToString(value);
   }catch{}
@@ -177,15 +187,63 @@ class NativePlayer {
   if(testing)return;
   try{
    Directory.CreateDirectory(root);
-   var data=new Dictionary<string,object>{{"bindings",bindings},{"opacity",opacity},{"hoverOpacity",hoverOpacity},{"shortcutsDisabled",disabled},{"left",main.Left},{"top",main.Top},{"dockSide",dockSide},{"dockLeft",double.IsNaN(edge.Left)?dockLeft:edge.Left},{"dockTop",double.IsNaN(edge.Top)?dockTop:edge.Top}};
+   var data=new Dictionary<string,object>{{"backgroundColor",backgroundColor},{"backgroundImage",backgroundImage},{"bindings",bindings},{"opacity",opacity},{"hoverOpacity",hoverOpacity},{"shortcutsDisabled",disabled},{"left",main.Left},{"top",main.Top},{"dockSide",dockSide},{"dockLeft",double.IsNaN(edge.Left)?dockLeft:edge.Left},{"dockTop",double.IsNaN(edge.Top)?dockTop:edge.Top}};
    File.WriteAllText(Config,new JavaScriptSerializer().Serialize(data),new UTF8Encoding(false));
   }catch(Exception e){Log(e);}
  }
+ void Animate(System.Windows.Media.Animation.Animatable target,DependencyProperty property,double value,double duration=180){
+  double from=(double)target.GetValue(property);target.BeginAnimation(property,null);target.SetValue(property,value);
+  if(Animations)target.BeginAnimation(property,new DoubleAnimation(from,value,TimeSpan.FromMilliseconds(duration)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut},FillBehavior=FillBehavior.Stop});
+ }
+ void Fade(UIElement target,double value){
+  double from=target.Opacity;target.BeginAnimation(UIElement.OpacityProperty,null);target.Opacity=value;
+  if(Animations)target.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(from,value,TimeSpan.FromMilliseconds(180)){FillBehavior=FillBehavior.Stop});
+ }
  void ApplyOpacity(){
   double value=Clamp(hover?hoverOpacity:opacity,.1,1);
-  main.Opacity=edge.Opacity=value;
-  UI<Border>("Card").Background=new SolidColorBrush(Color.FromRgb(245,245,248));
-  UI<StackPanel>("Tools").Opacity=hover?1:0;
+  Fade(main,value);Fade(edge,value);Fade(UI<StackPanel>("Tools"),hover?1:0);
+  UI<StackPanel>("Tools").IsHitTestVisible=hover;
+  Animate((TranslateTransform)UI<Border>("Card").RenderTransform,TranslateTransform.YProperty,hover?-2:0);
+ }
+ static BitmapSource ReadBackground(string path){
+  using(var stream=File.OpenRead(path)){
+   var bitmap=new BitmapImage();bitmap.BeginInit();bitmap.CacheOption=BitmapCacheOption.OnLoad;bitmap.DecodePixelWidth=1200;bitmap.StreamSource=stream;bitmap.EndInit();bitmap.Freeze();return bitmap;
+  }
+ }
+ void ImportBackground(string path){
+  var bitmap=ReadBackground(path);
+  Directory.CreateDirectory(root);
+  var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));
+  string destination=Path.Combine(root,"background.png"),temporary=Path.Combine(root,"background.tmp");
+  try{using(var file=File.Create(temporary))encoder.Save(file);File.Copy(temporary,destination,true);}
+  finally{if(File.Exists(temporary))File.Delete(temporary);}
+  backgroundBitmap=bitmap;backgroundImage=true;ApplyBackground();Save();
+ }
+ void ApplyBackground(){
+  Color color=(Color)ColorConverter.ConvertFromString(backgroundColor);color.A=255;
+  bool dark=(color.R*.299+color.G*.587+color.B*.114)<135;
+  Color end=Color.FromRgb((byte)Math.Min(255,color.R+12),(byte)Math.Min(255,color.G+12),(byte)Math.Min(255,color.B+12));
+  Brush surface=new LinearGradientBrush(end,color,65);
+  if(backgroundImage&&backgroundBitmap!=null){
+   var drawings=new DrawingGroup();var rect=new RectangleGeometry(new Rect(0,0,300,240));
+   drawings.Children.Add(new GeometryDrawing(new ImageBrush(backgroundBitmap){Stretch=Stretch.UniformToFill},null,rect));
+   drawings.Children.Add(new GeometryDrawing(new SolidColorBrush(Color.FromArgb(190,color.R,color.G,color.B)),null,rect));
+   surface=new DrawingBrush(drawings){Stretch=Stretch.Fill};
+  }
+  UI<Border>("Card").Background=surface;Edge<Border>("EdgeCard").Background=new SolidColorBrush(color);
+  Brush foreground=new SolidColorBrush(dark?Color.FromRgb(248,246,255):Color.FromRgb(43,36,62));
+  Brush muted=new SolidColorBrush(dark?Color.FromRgb(202,195,218):Color.FromRgb(115,104,136));
+  main.Foreground=foreground;
+  foreach(string name in new[]{"Title","Artist","Elapsed","Duration","PlaybackLabel"})UI<TextBlock>(name).Foreground=name=="Title"?foreground:muted;
+  foreach(string name in new[]{"Previous","Toggle","Next","Stop","Settings","Close"})UI<Button>(name).Foreground=foreground;
+ }
+ void PlaybackMotion(bool playing){
+  UI<TextBlock>("PlaybackLabel").Text=playing?"正在播放":session==null?"音乐待命":"已暂停";
+  if(wasPlaying==playing)return;wasPlaying=playing;
+  for(int i=0;i<3;i++){
+   var bar=UI<Border>("Beat"+i);bar.BeginAnimation(FrameworkElement.HeightProperty,null);bar.Height=5+i*2;
+   if(playing&&Animations)bar.BeginAnimation(FrameworkElement.HeightProperty,new DoubleAnimation(4,13-i,TimeSpan.FromMilliseconds(320+i*95)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever,BeginTime=TimeSpan.FromMilliseconds(i*80),EasingFunction=new SineEase()});
+  }
  }
  void SyncBindings(){hooks.Enabled=!disabled;hooks.Bindings.Clear();foreach(var pair in bindings)if(pair.Value!="")hooks.Bindings[pair.Value]=pair.Key;}
  static string Clock(double seconds){
@@ -205,6 +263,7 @@ class NativePlayer {
  }
  string Snap(Rect rect,Rect area){return rect.Left<=area.Left+24?"Left":rect.Right>=area.Right-24?"Right":"";}
  void Dock(string side,Rect area,double y){
+  motion++;main.BeginAnimation(UIElement.OpacityProperty,null);
   transition=true;collapse.Stop();
   try{
    dockSide=side;dockArea=area;hover=false;
@@ -214,9 +273,11 @@ class NativePlayer {
  }
  void Expand(){
   if(dockSide==""||moving||transition)return;
+  motion++;main.BeginAnimation(UIElement.OpacityProperty,null);
   transition=true;collapse.Stop();
   try{
-   hover=true;ApplyOpacity();main.Show();main.UpdateLayout();
+   bool opening=!main.IsVisible;hover=true;ApplyOpacity();main.Show();main.UpdateLayout();
+   if(opening){var slide=(TranslateTransform)UI<Border>("Card").RenderTransform;slide.X=dockSide=="Left"?-16:16;Animate(slide,TranslateTransform.XProperty,0,240);}
    main.Left=dockSide=="Left"?edge.Left+6:edge.Left-main.ActualWidth+14;
    main.Top=Clamp(edge.Top+52-main.ActualHeight/2,dockArea.Top,dockArea.Bottom-main.ActualHeight);
    FloatingWindowChrome.Raise(new WindowInteropHelper(edge).Handle,main.Topmost);
@@ -224,13 +285,17 @@ class NativePlayer {
  }
  void Collapse(){
   if(dockSide==""||moving||seeking||settings!=null)return;
-  transition=true;
-  try{hover=false;main.Hide();ApplyOpacity();}finally{transition=false;}
+  int token=++motion;hover=false;ApplyOpacity();
+  if(!Animations){main.Hide();return;}
+  var fade=new DoubleAnimation(main.Opacity,0,TimeSpan.FromMilliseconds(130)){FillBehavior=FillBehavior.Stop};
+  fade.Completed+=(s,e)=>{if(token==motion&&!main.IsMouseOver&&!edge.IsMouseOver)main.Hide();};
+  main.BeginAnimation(UIElement.OpacityProperty,fade);
  }
  void ScheduleCollapse(){if(dockSide!=""&&!transition){collapse.Stop();collapse.Start();}}
- void Hide(){collapse.Stop();main.Hide();edge.Hide();hover=false;ApplyOpacity();}
- void Show(){if(dockSide!=""){edge.Show();main.Hide();}else main.Show();}
+ void Hide(){motion++;main.BeginAnimation(UIElement.OpacityProperty,null);collapse.Stop();main.Hide();edge.Hide();hover=false;ApplyOpacity();}
+ void Show(){motion++;main.BeginAnimation(UIElement.OpacityProperty,null);if(dockSide!=""){edge.Show();main.Hide();}else main.Show();}
  void Undock(double x,double y){
+  motion++;main.BeginAnimation(UIElement.OpacityProperty,null);
   transition=true;collapse.Stop();
   try{dockSide="";edge.Hide();main.Left=x;main.Top=y;main.Show();hover=main.IsMouseOver;ApplyOpacity();}
   finally{transition=false;}Save();
@@ -238,13 +303,14 @@ class NativePlayer {
  void DragMain(object sender,MouseButtonEventArgs args){
   DependencyObject node=args.OriginalSource as DependencyObject;
   while(node!=null&&node!=main){if(node is Button)return;node=VisualTreeHelper.GetParent(node);}
-  collapse.Stop();moving=true;
+  motion++;main.BeginAnimation(UIElement.OpacityProperty,null);collapse.Stop();moving=true;
   try{dockSide="";edge.Hide();main.DragMove();}finally{moving=false;}
   var area=Area(main.Left+172,main.Top+main.ActualHeight/2);
   string side=Snap(new Rect(main.Left+14,main.Top+14,main.ActualWidth-28,main.ActualHeight-28),area);
   if(side!="")Dock(side,area,main.Top+(main.ActualHeight-104)/2);else Save();
  }
  void DragEdge(){
+  motion++;main.BeginAnimation(UIElement.OpacityProperty,null);
   collapse.Stop();moving=true;
   try{main.Hide();edge.DragMove();}finally{moving=false;}
   var area=Area(edge.Left+10,edge.Top+52);
@@ -277,6 +343,7 @@ class NativePlayer {
   string idNow=session==null?"":session.SourceAppUserModelId;
   if(idNow!=sessionId){sessionId=idNow;lastMetadata=DateTime.MinValue;seeking=false;UI<TextBlock>("Title").Text="";UI<TextBlock>("Artist").Text="";ResetCover();}
   if(session==null){
+   PlaybackMotion(false);
    UI<TextBlock>("Title").Text="暂无播放";UI<TextBlock>("Artist").Text="";
    foreach(string name in new[]{"Previous","Toggle","Next","Stop"})UI<Button>(name).IsEnabled=false;
    UI<StackPanel>("Progress").Visibility=Visibility.Collapsed;Progress(0,0);return;
@@ -284,6 +351,7 @@ class NativePlayer {
   var currentSession=session;
   var info=session.GetPlaybackInfo();var controls=info.Controls;
   bool playing=info.PlaybackStatus==GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+  PlaybackMotion(playing);
   UI<Button>("Previous").IsEnabled=controls.IsPreviousEnabled;UI<Button>("Next").IsEnabled=controls.IsNextEnabled;
   UI<Button>("Stop").IsEnabled=controls.IsStopEnabled;UI<Button>("Toggle").IsEnabled=playing?controls.IsPauseEnabled:controls.IsPlayEnabled;
   UI<Button>("Toggle").Content=((char)(playing?0xE769:0xE768)).ToString();
@@ -369,8 +437,13 @@ class NativePlayer {
   if(settings!=null){settings.Activate();return;}
   settings=new Window{Title="设置",ShowInTaskbar=false,Width=450,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,WindowStartupLocation=WindowStartupLocation.CenterScreen,Topmost=true,Background=new SolidColorBrush(Color.FromRgb(245,245,247)),FontFamily=new FontFamily("Microsoft YaHei UI")};
   using(var stream=Resource("app.ico")){var image=new BitmapImage();image.BeginInit();image.CacheOption=BitmapCacheOption.OnLoad;image.StreamSource=stream;image.EndInit();settings.Icon=image;}
-  var panel=new StackPanel{Margin=new Thickness(22)};settings.Content=panel;
-  panel.Children.Add(new TextBlock{Text="快捷键",FontSize=20,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,14)});
+  settings.Resources=(ResourceDictionary)XamlReader.Parse(@"<ResourceDictionary xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation"" xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+   <Style TargetType=""Button""><Setter Property=""Background"" Value=""#ECE8F4""/><Setter Property=""Foreground"" Value=""#423654""/><Setter Property=""BorderThickness"" Value=""0""/><Setter Property=""Padding"" Value=""6,3""/><Setter Property=""Cursor"" Value=""Hand""/><Setter Property=""Template""><Setter.Value><ControlTemplate TargetType=""Button""><Border CornerRadius=""7"" Background=""{TemplateBinding Background}"" Padding=""{TemplateBinding Padding}""><ContentPresenter HorizontalAlignment=""Center"" VerticalAlignment=""Center""/></Border><ControlTemplate.Triggers><Trigger Property=""IsMouseOver"" Value=""True""><Setter Property=""Opacity"" Value=""0.8""/></Trigger><Trigger Property=""IsPressed"" Value=""True""><Setter Property=""Opacity"" Value=""0.6""/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+   <Style TargetType=""TextBox""><Setter Property=""Background"" Value=""White""/><Setter Property=""BorderBrush"" Value=""#E0DBE9""/><Setter Property=""Padding"" Value=""6,2""/></Style>
+  </ResourceDictionary>");
+  var panel=new StackPanel{Margin=new Thickness(22)};settings.MaxHeight=Math.Max(320,SystemParameters.WorkArea.Height-60);settings.Content=new ScrollViewer{Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+  BackgroundSettings(panel);
+  panel.Children.Add(new TextBlock{Text="快捷键",FontSize=16,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,20,0,10)});
   string[] actions={"Toggle","Previous","Next","Stop","Visibility"},names={"播放 / 暂停","上一首","下一首","停止","显示 / 隐藏"};
   for(int i=0;i<actions.Length;i++){
    string action=actions[i];var row=new Grid{Margin=new Thickness(0,5,0,5)};
@@ -397,6 +470,34 @@ class NativePlayer {
   settings.Closed+=(s,e)=>{settings=null;normalSlider=hoverSlider=null;hooks.Recording=false;CancelRecording();Save();ScheduleCollapse();};
   settings.Show();
  }
+ sealed class DialogOwner:Forms.IWin32Window {
+  public IntPtr Handle {get;private set;}
+  public DialogOwner(IntPtr handle){Handle=handle;}
+ }
+ void BackgroundSettings(StackPanel panel){
+  panel.Children.Add(new TextBlock{Text="背景",FontSize=16,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,18,0,10)});
+  var choices=new StackPanel{Orientation=Orientation.Horizontal};panel.Children.Add(choices);
+  string[] colors={"#F2EFFA","#E6F3ED","#FAEDE1","#252535"},names={"雾紫","薄荷","奶杏","夜色"};
+  for(int i=0;i<colors.Length;i++){
+   string color=colors[i];var button=new Button{Content=names[i],Width=88,Height=32,Margin=new Thickness(0,0,6,0),Background=new SolidColorBrush((Color)ColorConverter.ConvertFromString(color)),Foreground=i==3?Brushes.White:Brushes.Black};
+   button.Click+=(s,e)=>{backgroundColor=color;backgroundImage=false;ApplyBackground();Save();};choices.Children.Add(button);
+  }
+  var actions=new StackPanel{Orientation=Orientation.Horizontal,Margin=new Thickness(0,8,0,0)};panel.Children.Add(actions);
+  var custom=new Button{Content="自选颜色",Width=110,Height=30,Margin=new Thickness(0,0,8,0)};
+  custom.Click+=(s,e)=>{
+   using(var dialog=new Forms.ColorDialog()){
+    var color=(Color)ColorConverter.ConvertFromString(backgroundColor);dialog.Color=System.Drawing.Color.FromArgb(color.R,color.G,color.B);dialog.FullOpen=true;
+    if(dialog.ShowDialog(new DialogOwner(new WindowInteropHelper(settings).Handle))==Forms.DialogResult.OK){backgroundColor=Color.FromRgb(dialog.Color.R,dialog.Color.G,dialog.Color.B).ToString();backgroundImage=false;ApplyBackground();Save();}
+   }
+  };
+  actions.Children.Add(custom);
+  var image=new Button{Content="选择图片",Width=110,Height=30,Margin=new Thickness(0,0,8,0)};
+  image.Click+=(s,e)=>{
+   var dialog=new Microsoft.Win32.OpenFileDialog{Filter="图片|*.png;*.jpg;*.jpeg;*.bmp",CheckFileExists=true};
+   if(dialog.ShowDialog(settings)==true){try{ImportBackground(dialog.FileName);}catch(Exception error){Forms.MessageBox.Show("无法读取图片："+error.Message,"NowPlaying");}}
+  };actions.Children.Add(image);
+  var reset=new Button{Content="恢复默认",Width=110,Height=30};reset.Click+=(s,e)=>{backgroundColor="#F2EFFA";backgroundImage=false;ApplyBackground();Save();};actions.Children.Add(reset);
+ }
  Slider OpacityRow(StackPanel panel,string name,double value,Action<double> change){
   panel.Children.Add(new TextBlock{Text=name,Margin=new Thickness(0,16,0,6)});
   var row=new Grid();row.ColumnDefinitions.Add(new ColumnDefinition());row.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(64)});
@@ -406,6 +507,30 @@ class NativePlayer {
   slider.ValueChanged+=(s,e)=>{number.Text=((int)slider.Value).ToString();change(slider.Value/100.0);};
   number.LostKeyboardFocus+=(s,e)=>commit();number.KeyDown+=(s,e)=>{if(e.Key==Key.Return)commit();};
   row.Children.Add(slider);Grid.SetColumn(number,1);row.Children.Add(number);panel.Children.Add(row);return slider;
+ }
+ void Snapshot(Window window,string path){
+  window.UpdateLayout();var image=new RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth),(int)Math.Ceiling(window.ActualHeight),96,96,PixelFormats.Pbgra32);image.Render(window);
+  var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var file=File.Create(path))encoder.Save(file);
+ }
+ async Task MotionTests(){
+  motionTesting=true;
+  try{
+   hover=false;ApplyOpacity();await Task.Delay(230);
+   hover=true;ApplyOpacity();await Task.Delay(230);
+   if(Math.Abs(main.Opacity-hoverOpacity)>.01)throw new Exception("悬停动效未到达目标透明度");
+   var area=Area(main.Left+100,main.Top+100);Dock("Left",area,area.Top+150);Expand();await Task.Delay(280);
+   if(Math.Abs(((TranslateTransform)UI<Border>("Card").RenderTransform).X)>.01)throw new Exception("展开动效未完成");
+   Collapse();Expand();await Task.Delay(200);if(!main.IsVisible)throw new Exception("收回后重新展开被旧动效隐藏");
+   Hide();await Task.Delay(200);if(main.IsVisible||edge.IsVisible)throw new Exception("动效期间隐藏失败");
+   Undock(area.Left+100,area.Top+100);
+  }finally{motionTesting=false;ApplyOpacity();}
+ }
+ async Task VisualTests(string folder){
+  opacity=hoverOpacity=1;hover=true;ApplyOpacity();backgroundImage=false;backgroundColor="#F2EFFA";ApplyBackground();
+  await Task.Delay(150);Snapshot(main,Path.Combine(folder,"player-light.png"));
+  backgroundColor="#252535";ApplyBackground();await Task.Delay(50);Snapshot(main,Path.Combine(folder,"player-dark.png"));
+  backgroundColor="#F2EFFA";backgroundImage=true;ApplyBackground();await Task.Delay(50);Snapshot(main,Path.Combine(folder,"player-image.png"));
+  backgroundImage=false;ApplyBackground();OpenSettings();await Task.Delay(150);Snapshot(settings,Path.Combine(folder,"settings.png"));settings.Close();
  }
  async Task Tests(){
   await Poll();
@@ -424,6 +549,17 @@ class NativePlayer {
   if((bool)dispatch.Invoke(hooks,new object[]{"Ctrl+Alt+Space",false}))throw new Exception("快捷键禁用失败");
   hooks.Enabled=true;if(!(bool)dispatch.Invoke(hooks,new object[]{"Ctrl+Alt+Space",false}))throw new Exception("快捷键恢复失败");
   startup.Test();
+  Directory.CreateDirectory(root);
+  var sample=new DrawingVisual();using(var dc=sample.RenderOpen()){dc.DrawRectangle(new LinearGradientBrush(Colors.Coral,Colors.SlateBlue,35),null,new Rect(0,0,400,300));}
+  var bitmap=new RenderTargetBitmap(400,300,96,96,PixelFormats.Pbgra32);bitmap.Render(sample);
+  var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));string original=Path.Combine(root,"sample.png");using(var file=File.Create(original))encoder.Save(file);
+  ImportBackground(original);File.Delete(original);
+  if(!(UI<Border>("Card").Background is DrawingBrush)||!File.Exists(Path.Combine(root,"background.png")))throw new Exception("背景图片导入失败");
+  File.WriteAllText(Config,new JavaScriptSerializer().Serialize(new Dictionary<string,object>{{"backgroundColor","#252535"},{"backgroundImage",true}}));
+  backgroundImage=false;backgroundColor="#F2EFFA";Load();
+  if(!backgroundImage||backgroundColor!="#FF252535")throw new Exception("背景设置恢复失败");
+  backgroundBitmap=ReadBackground(Path.Combine(root,"background.png"));ApplyBackground();
+  backgroundImage=false;ApplyBackground();if(!(UI<Border>("Card").Background is LinearGradientBrush))throw new Exception("背景预设切换失败");
  }
 }
 

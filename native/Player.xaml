@@ -4,13 +4,15 @@
  <Window.Resources><Style TargetType="Button">
  <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#303039"/>
  <Setter Property="BorderThickness" Value="0"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Padding" Value="9,7"/>
+ <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/><Setter Property="RenderTransform"><Setter.Value><ScaleTransform/></Setter.Value></Setter>
+
  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
  <Border x:Name="B" CornerRadius="12" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
  <ControlTemplate.Triggers>
  <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#14000000"/></Trigger>
  <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.25"/></Trigger>
- </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style> <Style TargetType="Slider">
+ </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter><Style.Triggers><Trigger Property="IsPressed" Value="True"><Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.9" ScaleY="0.9"/></Setter.Value></Setter></Trigger></Style.Triggers></Style> <Style TargetType="Slider">
  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider">
  <Grid Background="Transparent" Height="18">
  <Track x:Name="PART_Track" Height="18">
@@ -23,21 +25,26 @@
  <Track.Thumb><Thumb Width="8" Height="18"><Thumb.Template><ControlTemplate TargetType="Thumb">
  <Ellipse Width="8" Height="8" Fill="#7D7D87"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
  </Track></Grid></ControlTemplate></Setter.Value></Setter></Style></Window.Resources>
- <Border x:Name="Card" CornerRadius="22" Background="#E0F5F5F8" BorderThickness="1" BorderBrush="#CFFFFFFF" Margin="14" Padding="20,12,20,15">
- <Border.Effect><DropShadowEffect BlurRadius="22" ShadowDepth="5" Opacity="0.17" Color="#353545"/></Border.Effect>
+ <Border x:Name="Card" CornerRadius="24" Background="#E0F5F5F8" BorderThickness="1" BorderBrush="#CFFFFFFF" Margin="14" Padding="20,12,20,15">
+ <Border.RenderTransform><TranslateTransform/></Border.RenderTransform>
+ <Border.Effect><DropShadowEffect BlurRadius="24" ShadowDepth="6" Opacity="0.16" Color="#494167"/></Border.Effect>
  <StackPanel>
  <Grid x:Name="Header" Height="28" Background="Transparent">
+ <StackPanel Orientation="Horizontal" VerticalAlignment="Center" IsHitTestVisible="False">
+ <StackPanel Orientation="Horizontal" Height="14" VerticalAlignment="Center" Margin="0,0,8,0"><Border x:Name="Beat0" Width="3" Height="5" CornerRadius="1.5" Background="#8271C7" VerticalAlignment="Center" Margin="0,0,3,0"/><Border x:Name="Beat1" Width="3" Height="10" CornerRadius="1.5" Background="#8271C7" VerticalAlignment="Center" Margin="0,0,3,0"/><Border x:Name="Beat2" Width="3" Height="7" CornerRadius="1.5" Background="#8271C7" VerticalAlignment="Center"/></StackPanel>
+ <TextBlock x:Name="PlaybackLabel" Text="音乐待命" FontSize="10" Foreground="#817791" VerticalAlignment="Center"/>
+ </StackPanel>
  <StackPanel x:Name="Tools" Orientation="Horizontal" HorizontalAlignment="Right" Opacity="0">
  <Button x:Name="Settings" FontFamily="Segoe MDL2 Assets" Content="&#xE713;" FontSize="14" Width="28" Height="28" Padding="0"/>
  <Button x:Name="Close" FontFamily="Segoe MDL2 Assets" Content="&#xE8BB;" FontSize="13" Width="28" Height="28" Padding="0"/>
  </StackPanel></Grid>
  <Grid x:Name="Metadata" Background="Transparent" Margin="0,4,0,15">
- <Grid.ColumnDefinitions><ColumnDefinition Width="60"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
- <Border x:Name="Cover" CornerRadius="12" Width="48" Height="48" HorizontalAlignment="Left" Background="#15151528">
+ <Grid.ColumnDefinitions><ColumnDefinition Width="66"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+ <Border x:Name="Cover" CornerRadius="12" Width="54" Height="54" HorizontalAlignment="Left" Background="#15151528">
  <TextBlock x:Name="CoverIcon" Text="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="23" Foreground="#85858F" VerticalAlignment="Center" HorizontalAlignment="Center"/>
  </Border>
  <StackPanel Grid.Column="1" VerticalAlignment="Center">
- <TextBlock x:Name="Title" Text="暂无播放" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+ <TextBlock x:Name="Title" Text="暂无播放" FontSize="17" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
  <TextBlock x:Name="Artist" FontSize="12" Foreground="#797982" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
  </StackPanel></Grid>
  <StackPanel x:Name="Progress" Visibility="Collapsed" Margin="0,0,0,7">
@@ -46,7 +53,7 @@
  </StackPanel>
  <Grid Height="42"><StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
  <Button x:Name="Previous" Content="&#xE892;" FontFamily="Segoe MDL2 Assets" FontSize="19" Width="52" IsEnabled="False"/>
- <Button x:Name="Toggle" Content="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="24" Width="58" Background="#11000000" IsEnabled="False"/>
+ <Button x:Name="Toggle" Content="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="24" Width="58" Background="#227D63CE" IsEnabled="False"/>
  <Button x:Name="Next" Content="&#xE893;" FontFamily="Segoe MDL2 Assets" FontSize="19" Width="52" IsEnabled="False"/>
  </StackPanel><Button x:Name="Stop" Content="&#xE71A;" FontFamily="Segoe MDL2 Assets" FontSize="12" Width="31" HorizontalAlignment="Right" IsEnabled="False"/></Grid>
  </StackPanel></Border></Window>
