@@ -22,8 +22,8 @@ using Forms=System.Windows.Forms;
 
 [assembly:AssemblyTitle("NowPlaying")]
 [assembly:AssemblyProduct("NowPlaying")]
-[assembly:AssemblyVersion("1.0.1.0")]
-[assembly:AssemblyFileVersion("1.0.1.0")]
+[assembly:AssemblyVersion("1.0.3.0")]
+[assembly:AssemblyFileVersion("1.0.3.0")]
 [assembly:AssemblyCopyright("Copyright (C) 2026 wuminggggg")]
 
 class NativePlayer {
@@ -66,7 +66,7 @@ class NativePlayer {
    try{
     var request=GlobalSystemMediaTransportControlsSessionManager.RequestAsync().AsTask();
     if(!request.Wait(10000))throw new Exception("媒体接口等待超时");
-    File.WriteAllText(args[1],"PASS native task; media sessions="+request.Result.GetSessions().Count);
+    File.WriteAllText(args[1],"PASS native startup; media sessions="+request.Result.GetSessions().Count);
     return 0;
    }catch(Exception error){File.WriteAllText(args[1],"FAIL: "+error);return 1;}
   }
@@ -147,7 +147,7 @@ class NativePlayer {
   int code=0;
   if(testing){
    app.Dispatcher.BeginInvoke(new Action(async()=>{
-    try{await Tests();File.WriteAllText(testLog,"PASS: native WPF, media, hooks, opacity, docking, settings, login task");}
+    try{await Tests();File.WriteAllText(testLog,"PASS: native WPF, media, hooks, opacity, docking, settings, registry startup, startup path repair");}
     catch(Exception error){code=1;File.WriteAllText(testLog,"FAIL: "+error);}
     main.Close();
    }));
@@ -354,7 +354,7 @@ class NativePlayer {
   disabledMenu.CheckedChanged+=(s,e)=>{disabled=disabledMenu.Checked;hooks.Enabled=!disabled;string pending;while(hooks.Events.TryDequeue(out pending)){}Save();};
   menu.Items.Add(disabledMenu);
   startupMenu=new Forms.ToolStripMenuItem("开机自启"){Checked=startup.Enabled};
-  startupMenu.Click+=(s,e)=>{try{startup.Set(!startupMenu.Checked);}catch(Exception error){Log(error);}startupMenu.Checked=startup.Enabled;};
+  startupMenu.Click+=(s,e)=>{try{startup.Set(!startupMenu.Checked);}catch(Exception error){Log(error);Forms.MessageBox.Show("无法更新开机自启："+error.Message,"NowPlaying");}startupMenu.Checked=startup.Enabled;};
   menu.Items.Add(startupMenu);menu.Opening+=(s,e)=>startupMenu.Checked=startup.Enabled;
   menu.Items.Add(new Forms.ToolStripSeparator());
   menu.Items.Add("退出",null,(s,e)=>main.Close());
@@ -428,55 +428,87 @@ class NativePlayer {
 }
 
 class StartupManager {
+ const string RunKey=@"Software\Microsoft\Windows\CurrentVersion\Run";
  readonly string root,executable;
- string name="NowPlaying-"+System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
- string sid=System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
+ string name="NowPlaying";
+ string LegacyName {get{return "NowPlaying-"+System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;}}
  public StartupManager(string dataRoot,string binary){root=dataRoot;executable=binary;}
- dynamic Service(){dynamic service=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));service.Connect();return service;}
- dynamic TaskInfo(){try{return Service().GetFolder(@"\").GetTask(name);}catch{return null;}}
- public bool Enabled {get{try{dynamic task=TaskInfo();return task!=null&&task.Enabled&&File.Exists((string)task.Definition.Actions.Item(1).Path);}catch{return false;}}}
+ string Command {get{using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey)){return key==null?null:key.GetValue(name) as string;}}}
+ public bool Enabled {get{
+  string command=Command;
+  return !string.IsNullOrEmpty(command)&&command.Length>2&&command[0]=='"'&&command[command.Length-1]=='"'&&File.Exists(command.Substring(1,command.Length-2));
+ }}
+ string InstalledPath {get{return Path.Combine(root,"app",Assembly.GetExecutingAssembly().GetName().Version.ToString(),"NowPlaying.exe");}}
  string Deploy(){
-  string version=Assembly.GetExecutingAssembly().GetName().Version.ToString();
-  string folder=Path.Combine(root,"app",version);Directory.CreateDirectory(folder);
-  string path=Path.Combine(folder,"NowPlaying.exe");
+  string path=InstalledPath;Directory.CreateDirectory(Path.GetDirectoryName(path));
   string physical=File.Exists(path)?StartupPaths.ResolveFile(path):path;
   if(!string.Equals(executable,physical,StringComparison.OrdinalIgnoreCase))File.Copy(executable,path,true);
   return StartupPaths.ResolveFile(path);
  }
+ dynamic LegacyTask(){
+  dynamic service=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));service.Connect();
+  try{return service.GetFolder(@"\").GetTask(LegacyName);}
+  catch(System.Runtime.InteropServices.COMException error){if(error.ErrorCode==unchecked((int)0x80070002))return null;throw;}
+ }
+ void LogMigration(Exception error){try{Directory.CreateDirectory(root);File.AppendAllText(Path.Combine(root,"errors.log"),DateTime.Now.ToString("s")+" Legacy startup migration: "+error+Environment.NewLine);}catch{}}
+ void RemoveLegacy(){
+  if(name!="NowPlaying")return;
+  try{
+   dynamic task=LegacyTask();if(task==null)return;
+   task.Enabled=false;
+   dynamic service=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));service.Connect();
+   service.GetFolder(@"\").DeleteTask(LegacyName,0);
+  }catch(Exception error){LogMigration(error);}
+ }
  public void Set(bool enabled){
-  dynamic service=Service();dynamic folder=service.GetFolder(@"\");
   if(enabled){
-   string path=Deploy();dynamic task=service.NewTask(0);
-   task.RegistrationInfo.Description="NowPlaying";task.Principal.UserId=sid;task.Principal.LogonType=3;task.Principal.RunLevel=0;
-   task.Settings.Enabled=true;task.Settings.StartWhenAvailable=true;task.Settings.DisallowStartIfOnBatteries=false;
-   task.Settings.StopIfGoingOnBatteries=false;task.Settings.ExecutionTimeLimit="PT0S";task.Settings.MultipleInstances=2;
-   dynamic trigger=task.Triggers.Create(9);trigger.UserId=sid;trigger.Enabled=true;trigger.Delay="PT15S";
-   dynamic action=task.Actions.Create(0);action.Path=path;
-   folder.RegisterTaskDefinition(name,task,6,sid,null,3);
-  }else{if(TaskInfo()!=null)folder.DeleteTask(name,0);}
-  using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run",true)){if(key!=null)key.DeleteValue("NowPlaying",false);}
+   string command="\""+Deploy()+"\"";
+   if(command.Length>260)throw new IOException("自启路径过长，请缩短用户数据目录路径。");
+   using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey)){key.SetValue(name,command,Microsoft.Win32.RegistryValueKind.String);}
+  }else{
+   using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey,true)){if(key!=null)key.DeleteValue(name,false);}
+  }
+  RemoveLegacy();
  }
  public void Migrate(){
-  bool legacy=false;
-  using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")){legacy=key!=null&&!string.IsNullOrWhiteSpace((string)key.GetValue("NowPlaying"));}
-  if(Enabled||legacy)Set(true);
+  bool registered;
+  using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey)){registered=key!=null&&key.GetValueNames().Contains(name,StringComparer.OrdinalIgnoreCase);}
+  if(registered){
+   string path=InstalledPath;
+   string expected=File.Exists(path)?"\""+StartupPaths.ResolveFile(path)+"\"":null;
+   if(expected==null||!string.Equals(Command,expected,StringComparison.OrdinalIgnoreCase))Set(true);
+   else RemoveLegacy();
+   return;
+  }
+  if(name!="NowPlaying")return;
+  bool enabled=false;
+  try{dynamic task=LegacyTask();enabled=task!=null&&task.Enabled;}catch(Exception error){LogMigration(error);}
+  if(enabled)Set(true);
  }
  public void Test(){
-  string original=name;name="NowPlaying-NativeTest-"+Guid.NewGuid().ToString("N");
-  string probe=Path.GetTempFileName();probe=StartupPaths.ResolveFile(probe);
+  string temp=Path.Combine(Path.GetTempPath(),"NowPlaying registry test "+Guid.NewGuid().ToString("N"));
+  var test=new StartupManager(temp,executable);test.name="NowPlaying-Test-"+Guid.NewGuid().ToString("N");
+  string probe=Path.Combine(temp,"probe.txt");
   try{
-   dynamic service=Service();dynamic task=service.NewTask(0);
-   task.Principal.UserId=sid;task.Principal.LogonType=3;task.Principal.RunLevel=0;
-   task.Settings.DisallowStartIfOnBatteries=false;task.Settings.StopIfGoingOnBatteries=false;
-   dynamic trigger=task.Triggers.Create(9);trigger.UserId=sid;trigger.Delay="PT15S";
-   dynamic action=task.Actions.Create(0);action.Path=executable;action.Arguments="--startup-probe \""+probe+"\"";
-   dynamic registered=service.GetFolder(@"\").RegisterTaskDefinition(name,task,6,sid,null,3);
-   if(!Enabled)throw new Exception("原生登录任务注册失败");
-   registered.Run(null);
-   DateTime deadline=DateTime.UtcNow.AddSeconds(20);
-   while(DateTime.UtcNow<deadline&&new FileInfo(probe).Length==0)Thread.Sleep(150);
-   string result=File.ReadAllText(probe);
-   if(!result.StartsWith("PASS native task;"))throw new Exception("真实任务启动失败："+result);
-  }finally{try{Service().GetFolder(@"\").DeleteTask(name,0);}catch{}File.Delete(probe);name=original;}
+   test.Set(true);
+   string command=test.Command;
+   if(!test.Enabled||command!="\""+test.Deploy()+"\"")throw new Exception("注册表启动项或路径引号错误");
+   var info=new ProcessStartInfo(command.Substring(1,command.Length-2),"--startup-probe \""+probe+"\""){UseShellExecute=false,CreateNoWindow=true};
+   using(var process=Process.Start(info)){
+    if(!process.WaitForExit(20000)){process.Kill();process.WaitForExit();throw new Exception("启动项命令运行超时");}
+    if(process.ExitCode!=0||!File.ReadAllText(probe).StartsWith("PASS native startup;"))throw new Exception("启动项命令运行失败");
+   }
+   foreach(object invalid in new object[]{"", "\""+Path.Combine(temp,"missing.exe")+"\"", 123}){
+    using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey,true)){key.SetValue(test.name,invalid);}
+    test.Migrate();
+    if(test.Command!=command||!test.Enabled)throw new Exception("无效启动路径未修复");
+   }
+   string installed=test.InstalledPath;
+   DateTime written=File.GetLastWriteTimeUtc(installed);test.Migrate();
+   if(test.Command!=command||File.GetLastWriteTimeUtc(installed)!=written)throw new Exception("有效启动项被重复部署");
+   File.Delete(installed);test.Migrate();
+   if(!test.Enabled||test.Command!=command)throw new Exception("丢失的自启文件未恢复");
+   test.Set(false);test.Migrate();if(test.Command!=null)throw new Exception("取消自启后不应重新注册");
+  }finally{test.Set(false);if(Directory.Exists(temp))Directory.Delete(temp,true);}
  }
 }
